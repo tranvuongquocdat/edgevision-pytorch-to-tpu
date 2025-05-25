@@ -7,8 +7,11 @@ import json
 import os
 import time
 import websockets
+import threading
+import queue
 from pathlib import Path
 from picamera2 import Picamera2
+import numpy as np
 
 # Cấu hình camera
 width, height = 640, 480
@@ -18,20 +21,23 @@ capture_config = picam2.create_preview_configuration(
 )
 picam2.configure(capture_config)
 
+# Queue để chia sẻ dữ liệu giữa các luồng
+frame_queue = queue.Queue(maxsize=10)
+data_queue = queue.Queue(maxsize=10)
+
 def get_cpu_temp():
     temp = os.popen("vcgencmd measure_temp").readline().replace("temp=", "").replace("'C\n", "")
     return float(temp)
 
-async def process_client(websocket):
-    picam2.start()
-    
+def capture_frames():
+    """Luồng riêng biệt để thu thập khung hình từ camera"""
     frame_count = 0
     start_time = time.time()
     fps = 0
     cpu_temp = 0
     
-    try:
-        while True:
+    while True:
+        try:
             # Chụp ảnh
             pil_image = picam2.capture_image()
             # Chuyển đổi ảnh PIL thành numpy array cho OpenCV
@@ -48,22 +54,62 @@ async def process_client(websocket):
                 cpu_temp = get_cpu_temp()
                 start_time = time.time()
             
-            # Mã hóa ảnh
-            _, buffer = cv2.imencode('.jpg', frame)
-            img_str = base64.b64encode(buffer).decode('utf-8')
-            
-            # Gửi dữ liệu
+            # Đưa frame vào queue để xử lý
+            if not frame_queue.full():
+                frame_queue.put((frame, fps, cpu_temp))
+                
+        except Exception as e:
+            print(f"Lỗi khi chụp khung hình: {e}")
+            time.sleep(0.1)
+
+def process_frames():
+    """Luồng riêng biệt để xử lý khung hình và mã hóa"""
+    while True:
+        try:
+            if not frame_queue.empty():
+                frame, fps, cpu_temp = frame_queue.get()
+                
+                # Mã hóa ảnh
+                _, buffer = cv2.imencode('.jpg', frame)
+                img_str = base64.b64encode(buffer).decode('utf-8')
+                
+                # Đưa dữ liệu đã xử lý vào queue để gửi
+                if not data_queue.full():
+                    data_queue.put({
+                        "image": img_str,
+                        "fps": fps,
+                        "cpu_temp": cpu_temp
+                    })
+                
+                # Đánh dấu là đã xử lý xong
+                frame_queue.task_done()
+        except Exception as e:
+            print(f"Lỗi khi xử lý khung hình: {e}")
+            time.sleep(0.1)
+
+async def process_client(websocket):
+    picam2.start()
+    
+    # Khởi động các luồng xử lý
+    capture_thread = threading.Thread(target=capture_frames, daemon=True)
+    process_thread = threading.Thread(target=process_frames, daemon=True)
+    
+    capture_thread.start()
+    process_thread.start()
+    
+    try:
+        while True:
+            # Chờ và gửi dữ liệu
             try:
-                await websocket.send(json.dumps({
-                    "image": img_str,
-                    "fps": fps,
-                    "cpu_temp": cpu_temp
-                }))
+                if not data_queue.empty():
+                    data = data_queue.get()
+                    await websocket.send(json.dumps(data))
+                    data_queue.task_done()
+                else:
+                    # Không có dữ liệu, chờ một chút
+                    await asyncio.sleep(0.01)
             except websockets.exceptions.ConnectionClosed:
                 break
-            
-            # Độ trễ nhỏ để tránh quá tải mạng
-            await asyncio.sleep(0.01)
             
     except Exception as e:
         print(f"Lỗi kết nối: {e}")
@@ -83,7 +129,6 @@ async def main():
     await server.wait_closed()
 
 if __name__ == "__main__":
-    import numpy as np
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

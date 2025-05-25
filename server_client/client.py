@@ -9,7 +9,7 @@ from websockets.exceptions import ConnectionClosed
 from ultralytics import YOLO
 
 # Cấu hình
-SERVER_IP = "192.168.137.162"  # Thay đổi IP này thành IP của Raspberry Pi
+SERVER_IP = "192.168.137.81"  # Thay đổi IP này thành IP của Raspberry Pi
 SERVER_PORT = "8000"
 
 # Tải model YOLOv8m
@@ -50,7 +50,7 @@ async def connect_to_server():
                         inference_start = time.time()
                         
                         # Thực hiện phát hiện đối tượng với YOLOv8
-                        results = model(frame)
+                        results = model(frame, verbose=False)
                         
                         # Tính thời gian suy luận
                         inference_latency = (time.time() - inference_start) * 1000  # ms
@@ -91,7 +91,8 @@ async def connect_to_server():
                         
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             cv2.destroyAllWindows()
-                            return  # Thoát sạch sẽ
+                            print("Đã nhấn phím q, đang thoát chương trình...")
+                            exit(0)  # Thoát hoàn toàn khỏi chương trình
                             
                     except asyncio.TimeoutError:
                         print("Hết thời gian chờ phản hồi từ server")

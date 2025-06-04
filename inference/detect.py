@@ -17,7 +17,7 @@ signal.signal(signal.SIGINT, signal_handler)
 
 # Add argument parser
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_path', type=str, default="models/yolo11n_320.tflite",
+parser.add_argument('--model_path', type=str, default="models/yolo12n_320.tflite",
                     help='Path to the model file')
 parser.add_argument('--names_path', type=str, default="models/label_yolo11.yaml",
                     help='Path to the labels file')
